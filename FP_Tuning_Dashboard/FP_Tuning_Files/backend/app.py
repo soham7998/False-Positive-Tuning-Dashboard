@@ -1,0 +1,211 @@
+"""
+False Positive Tuning Dashboard - Backend API
+Deployed on Railway.app
+"""
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dataclasses import asdict
+import os
+import json
+from datetime import datetime
+
+from src.fp_engine import FPDetectionEngine, Alert, TuningRule
+from src.sample_data import generate_sample_alerts
+
+app = Flask(__name__)
+
+# CORS for Vercel frontend
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "https://*.vercel.app",
+            "https://fp-tuning-dashboard.vercel.app",
+        ],
+        "methods": ["GET", "POST", "OPTIONS", "PUT"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+engine = FPDetectionEngine()
+
+
+def load_sample_data():
+    """Load sample alerts into engine."""
+    try:
+        with open("data/sample_alerts.json", "r") as f:
+            alerts = json.load(f)
+        engine.add_alerts(alerts)
+        engine.detect_patterns()
+    except FileNotFoundError:
+        alerts = generate_sample_alerts()
+        engine.add_alerts(alerts)
+        engine.detect_patterns()
+
+
+load_sample_data()
+
+
+@app.route('/')
+def root():
+    return jsonify({
+        'service': 'False Positive Tuning Dashboard API',
+        'version': '1.0.0',
+        'status': 'running',
+        'endpoints': {
+            'GET /api/health': 'Health check',
+            'GET /api/metrics': 'Dashboard metrics',
+            'GET /api/alerts': 'List alerts (?status=pending|fp|tp)',
+            'POST /api/alerts/<id>/decision': 'Update analyst decision',
+            'GET /api/rules': 'Suggested tuning rules',
+            'POST /api/rules/<id>/apply': 'Apply tuning rule',
+            'POST /api/rules/<id>/reject': 'Reject tuning rule',
+            'POST /api/analyze': 'Re-run pattern detection',
+            'POST /api/seed': 'Reset to sample data'
+        }
+    })
+
+
+@app.route('/api/health')
+def health():
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'alerts_loaded': len(engine.alerts),
+        'rules_suggested': len(engine.tuning_rules)
+    })
+
+
+@app.route('/api/metrics')
+def metrics():
+    return jsonify({
+        **engine.get_metrics(),
+        'severity_distribution': engine.get_severity_distribution(),
+        'decision_distribution': engine.get_decision_distribution(),
+    })
+
+
+@app.route('/api/alerts')
+def list_alerts():
+    status = request.args.get('status', 'all')
+    if status == 'pending':
+        filtered = [a for a in engine.alerts if a.analyst_decision in (None, "pending")]
+    elif status == 'fp':
+        filtered = [a for a in engine.alerts if a.analyst_decision == "false_positive"]
+    elif status == 'tp':
+        filtered = [a for a in engine.alerts if a.analyst_decision == "true_positive"]
+    else:
+        filtered = engine.alerts
+    return jsonify({
+        'count': len(filtered),
+        'alerts': [asdict(a) for a in filtered]
+    })
+
+
+@app.route('/api/alerts/<alert_id>/decision', methods=['POST', 'OPTIONS'])
+def update_decision(alert_id):
+    if request.method == 'OPTIONS':
+        return '', 204
+    data = request.json or {}
+    decision = data.get('decision')
+    notes = data.get('notes', '')
+    analyst_id = data.get('analyst_id', 'analyst_1')
+    
+    if decision not in ('true_positive', 'false_positive'):
+        return jsonify({'error': 'Invalid decision'}), 400
+    
+    success = engine.update_decision(alert_id, decision, notes, analyst_id)
+    if not success:
+        return jsonify({'error': 'Alert not found'}), 404
+    
+    engine.detect_patterns()
+    return jsonify({
+        'success': True,
+        'alert_id': alert_id,
+        'decision': decision,
+        'rules_suggested': len([r for r in engine.tuning_rules if r.status == 'pending'])
+    })
+
+
+@app.route('/api/rules')
+def list_rules():
+    status = request.args.get('status', 'all')
+    if status != 'all':
+        filtered = [r for r in engine.tuning_rules if r.status == status]
+    else:
+        filtered = engine.tuning_rules
+    return jsonify({
+        'count': len(filtered),
+        'rules': [asdict(r) for r in filtered]
+    })
+
+
+@app.route('/api/rules/<rule_id>/apply', methods=['POST', 'OPTIONS'])
+def apply_rule(rule_id):
+    if request.method == 'OPTIONS':
+        return '', 204
+    success = engine.apply_rule(rule_id)
+    if not success:
+        return jsonify({'error': 'Rule not found'}), 404
+    return jsonify({
+        'success': True,
+        'rule_id': rule_id,
+        'status': 'applied'
+    })
+
+
+@app.route('/api/rules/<rule_id>/reject', methods=['POST', 'OPTIONS'])
+def reject_rule(rule_id):
+    if request.method == 'OPTIONS':
+        return '', 204
+    success = engine.reject_rule(rule_id)
+    if not success:
+        return jsonify({'error': 'Rule not found'}), 404
+    return jsonify({'success': True, 'rule_id': rule_id, 'status': 'rejected'})
+
+
+@app.route('/api/analyze', methods=['POST', 'OPTIONS'])
+def analyze():
+    if request.method == 'OPTIONS':
+        return '', 204
+    rules = engine.detect_patterns()
+    return jsonify({
+        'success': True,
+        'rules_generated': len(rules),
+        'rules': [asdict(r) for r in rules]
+    })
+
+
+@app.route('/api/seed', methods=['POST', 'OPTIONS'])
+def seed():
+    if request.method == 'OPTIONS':
+        return '', 204
+    global engine
+    engine = FPDetectionEngine()
+    load_sample_data()
+    return jsonify({
+        'success': True,
+        'alerts_loaded': len(engine.alerts),
+        'rules_suggested': len(engine.tuning_rules)
+    })
+
+
+@app.errorhandler(404)
+def not_found(e):
+    return jsonify({'error': 'Endpoint not found'}), 404
+
+
+@app.errorhandler(500)
+def server_error(e):
+    return jsonify({'error': 'Internal server error'}), 500
+
+
+if __name__ == '__main__':
+    port = int(os.getenv('PORT', 5000))
+    env = os.getenv('FLASK_ENV', 'development')
+    print(f"🚀 FP Tuning API starting on port {port} ({env})")
+    print(f"   Loaded {len(engine.alerts)} alerts")
+    print(f"   Generated {len(engine.tuning_rules)} tuning suggestions")
+    app.run(host='0.0.0.0', port=port, debug=(env == 'development'))
