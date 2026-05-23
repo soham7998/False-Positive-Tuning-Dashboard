@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import {
   Shield, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle,
   Loader2, ExternalLink, Activity, Zap, Target, ChevronRight, RefreshCw,
-  AlertCircle, FileText, Filter
+  AlertCircle, FileText, Filter, Copy, ChevronDown, ChevronUp
 } from 'lucide-react';
 import {
   BarChart, Bar, PieChart, Pie, Cell, ResponsiveContainer,
@@ -12,6 +12,27 @@ import {
 } from 'recharts';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
+type SiemFormat = 'splunk' | 'elastic' | 'sigma';
+
+function toSplunk(pattern: Record<string, any>): string {
+  const conditions = Object.entries(pattern)
+    .map(([k, v]) => `${k}="${v}"`)
+    .join(' ');
+  return `index=soc_alerts ${conditions.replace(/rule_name="([^"]+)"/, 'NOT rule_name="$1"')}`;
+}
+
+function toElastic(pattern: Record<string, any>): string {
+  const terms = Object.entries(pattern).map(([k, v]) => `    { "term": { "${k}": "${v}" } }`);
+  return `{\n  "bool": {\n    "must_not": [\n${terms.join(',\n')}\n    ]\n  }\n}`;
+}
+
+function toSigma(pattern: Record<string, any>): string {
+  const fields = Object.entries(pattern)
+    .map(([k, v]) => `  ${k}: '${v}'`)
+    .join('\n');
+  return `filter:\n${fields}\ncondition: selection and not filter`;
+}
 
 interface Metrics {
   total_alerts: number;
@@ -72,6 +93,15 @@ export default function Dashboard() {
   const [alertFilter, setAlertFilter] = useState<'pending' | 'fp' | 'tp' | 'all'>('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exportRule, setExportRule] = useState<string | null>(null);
+  const [exportTab, setExportTab] = useState<SiemFormat>('splunk');
+  const [copied, setCopied] = useState(false);
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const fetchAll = async () => {
     try {
@@ -482,7 +512,55 @@ export default function Dashboard() {
                     >
                       <XCircle className="w-4 h-4" /> Reject
                     </button>
+                    <button
+                      onClick={() => {
+                        setExportRule(exportRule === rule.rule_id ? null : rule.rule_id);
+                        setExportTab('splunk');
+                        setCopied(false);
+                      }}
+                      className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium flex items-center gap-2"
+                    >
+                      <FileText className="w-4 h-4" />
+                      Export
+                      {exportRule === rule.rule_id ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                    </button>
                   </div>
+
+                  {exportRule === rule.rule_id && (
+                    <div className="mt-3 border border-slate-200 rounded-lg overflow-hidden">
+                      <div className="flex border-b border-slate-200 bg-slate-50">
+                        {(['splunk', 'elastic', 'sigma'] as SiemFormat[]).map((fmt) => (
+                          <button
+                            key={fmt}
+                            onClick={() => { setExportTab(fmt); setCopied(false); }}
+                            className={`px-4 py-2 text-xs font-medium capitalize ${
+                              exportTab === fmt
+                                ? 'bg-white text-slate-900 border-b-2 border-blue-600'
+                                : 'text-slate-500 hover:text-slate-700'
+                            }`}
+                          >
+                            {fmt === 'elastic' ? 'Elastic / OpenSearch' : fmt.charAt(0).toUpperCase() + fmt.slice(1)}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => copyToClipboard(
+                            exportTab === 'splunk' ? toSplunk(rule.pattern)
+                            : exportTab === 'elastic' ? toElastic(rule.pattern)
+                            : toSigma(rule.pattern)
+                          )}
+                          className="ml-auto px-3 py-2 text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1.5 font-medium"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          {copied ? 'Copied!' : 'Copy'}
+                        </button>
+                      </div>
+                      <pre className="p-4 text-xs font-mono text-slate-700 bg-white overflow-x-auto whitespace-pre">
+                        {exportTab === 'splunk' && toSplunk(rule.pattern)}
+                        {exportTab === 'elastic' && toElastic(rule.pattern)}
+                        {exportTab === 'sigma' && toSigma(rule.pattern)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               ))
             )}
