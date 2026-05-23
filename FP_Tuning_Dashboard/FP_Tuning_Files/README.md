@@ -1,260 +1,189 @@
 # FP Tuning Dashboard
 
-**Automated false-positive reduction for Security Operations Centers.**
-
 [![Backend](https://img.shields.io/badge/Backend-Railway-9333ea)](https://railway.app)
 [![Frontend](https://img.shields.io/badge/Frontend-Vercel-000)](https://vercel.com)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-**Live App:** https://false-positive-tuning-dashboard.vercel.app
+**Live:** https://false-positive-tuning-dashboard.vercel.app  
 **API:** https://false-positive-tuning-dashboard-production.up.railway.app
 
----
-
-## What Is This?
-
-The **FP Tuning Dashboard** is a full-stack SOC tool that helps security analysts eliminate alert fatigue. Analysts triage incoming security alerts — marking each as a True Positive or False Positive. The backend engine automatically detects recurring FP patterns and surfaces suppression/whitelist rule suggestions with confidence scores and estimated time savings.
-
-The project ships with 41 realistic sample alerts containing embedded FP patterns so the full workflow is demonstrable out of the box, no setup required.
-
----
-
-## The Problem It Solves
-
-| Problem | Impact | How This Helps |
-|---|---|---|
-| Analysts repeatedly triage the same benign alerts | Hours wasted per shift | Detects recurring FP patterns after every decision |
-| No visibility into which rules generate the most noise | Hard to prioritize tuning | Overview ranks top FP-generating rules with counts |
-| Tuning rules are created manually and inconsistently | Rules are missed or wrong | Engine auto-generates suppress/whitelist rules with confidence scores |
-| Can't prove ROI of tuning work | Budget pressure | Each rule shows estimated weekly FP reduction and analyst time saved |
-| Decisions aren't tracked between shifts | Context lost | All decisions persist with analyst ID, notes, and timestamps |
-| Alert fatigue causes real threats to be missed | Serious security risk | Reducing FP volume lets analysts focus on genuine threats |
+SOC analysts spend a significant chunk of each shift triaging alerts they've already seen before — the same rule firing on the same backup process, the same IT admin account, the same monitoring IP. This tool tracks those decisions and automatically surfaces suppression rule suggestions when a pattern repeats enough times to be worth acting on.
 
 ---
 
 ## How It Works
 
-```
-Analyst triages alert  →  marks True Positive or False Positive
-               │
-               ▼
-     Flask API stores decision on the Alert object
-               │
-               ▼
-     FPDetectionEngine.detect_patterns() runs automatically
-               │
-               ▼
-     Engine groups all FP alerts by 4 pattern types:
-       • rule_name + source_ip
-       • rule_name + user
-       • rule_name + process
-       • rule_name + host
-               │
-               ▼
-     Patterns with ≥ 3 FPs generate a TuningRule:
-       confidence  = min(0.95,  0.5 + fp_count × 0.05)
-       weekly_fps  = fp_count × 2   (projection)
-       time_saved  = weekly_fps × 8 min/alert
-       action      = suppress (fp_count ≥ 5) or lower_severity
-               │
-               ▼
-     Analyst reviews suggested rules → Apply or Reject
-```
+Analysts triage alerts through the dashboard, marking each one as a True Positive or False Positive. After every decision, the detection engine re-runs and groups all FP alerts by four pattern types:
 
-### Dashboard Tabs
+- `rule_name + source_ip`
+- `rule_name + user`
+- `rule_name + process`
+- `rule_name + host`
 
-| Tab | What You See | What You Can Do |
-|---|---|---|
-| **Overview** | KPI cards — time saved, FP rate, suggested rules, true positives | View decision pie chart and top FP-rule bar chart |
-| **Alert Triage** | All alerts with severity, rule name, IP, user, host, process | Mark individual alerts as True Positive or False Positive |
-| **Tuning Rules** | Auto-generated suppression/whitelist suggestions with confidence, FP count, estimated time saved, pattern | Apply or Reject each rule |
+Any combination that appears 3 or more times becomes a suggested tuning rule. The rule includes:
+
+- **Confidence score** — `min(0.95, 0.5 + fp_count × 0.05)`, grows with each additional FP
+- **Suggested action** — `suppress` if fp_count ≥ 5, otherwise `lower_severity`
+- **Estimated weekly FP reduction** — fp_count × 2 (rough forward projection)
+- **Estimated time saved** — weekly FPs × 8 min/alert
+
+Rules stay in `pending` state until an analyst applies or rejects them.
 
 ---
 
-## Architecture
+## Tuning Rules — What They Contain
 
+Each rule is a structured object the engine generates:
+
+```json
+{
+  "rule_id": "TUN-0001",
+  "name": "Suppress: Suspicious PowerShell Execution from User=admin_it_01",
+  "description": "Detected 6 false positives for rule 'Suspicious PowerShell Execution' with user 'admin_it_01'. Recommend suppressing or whitelisting this combination.",
+  "pattern": {
+    "rule_name": "Suspicious PowerShell Execution",
+    "user": "admin_it_01"
+  },
+  "fp_count": 6,
+  "confidence": 0.8,
+  "estimated_fp_reduction": 12,
+  "estimated_time_saved_minutes": 96,
+  "suggested_action": "suppress",
+  "status": "pending"
+}
 ```
-┌──────────────────────────┐         ┌──────────────────────────┐
-│    Frontend (Vercel)     │  HTTPS  │    Backend (Railway)     │
-│                          │         │                          │
-│  Next.js 14 + TypeScript │ ──────► │  Flask REST API          │
-│  Tailwind CSS            │         │  FPDetectionEngine       │
-│  Recharts                │ ◄────── │  In-memory alert store   │
-│  Lucide React icons      │   JSON  │  Pattern clustering      │
-└──────────────────────────┘         └──────────────────────────┘
-```
+
+The `pattern` field is deliberately simple — a flat key/value map that's easy to translate into any SIEM's suppression syntax.
 
 ---
 
-## Frontend
+## Applying Rules to Your SIEM
 
-| Technology | Version | Role |
-|---|---|---|
-| Next.js | 14.2.5 | React framework — App Router |
-| TypeScript | 5.5 | Static typing across all components |
-| Tailwind CSS | 3.4 | Utility-first styling, responsive layout |
-| Recharts | 2.12 | PieChart (decision distribution) + BarChart (top FP rules) |
-| Lucide React | 0.408 | Icon set |
-| Vercel | — | Deployment, CDN, environment variables |
+The dashboard itself marks rules as applied or rejected, but doesn't push changes to a SIEM directly. The API returns structured rule data that can be piped into whichever platform you use.
 
-### Frontend Setup
+**Splunk** — translate the pattern into a `NOT` filter in your search:
+```spl
+index=soc_alerts rule_name="Suspicious PowerShell Execution" NOT user="admin_it_01"
+```
 
+**Elastic / OpenSearch** — add a `must_not` clause to your detection query:
+```json
+{
+  "must_not": [
+    { "term": { "rule_name": "Suspicious PowerShell Execution" } },
+    { "term": { "user": "admin_it_01" } }
+  ]
+}
+```
+
+**Sigma** — translate to a condition filter:
+```yaml
+filter:
+  rule_name: 'Suspicious PowerShell Execution'
+  user: 'admin_it_01'
+condition: selection and not filter
+```
+
+To pull all pending rules from the API:
+```bash
+curl https://false-positive-tuning-dashboard-production.up.railway.app/api/rules?status=pending
+```
+
+A webhook or scheduled script can poll this endpoint and apply rules programmatically once they're approved in the dashboard.
+
+---
+
+## Stack
+
+**Backend** — Python 3.11, Flask, Flask-CORS, Gunicorn, deployed on Railway  
+**Frontend** — Next.js 14, TypeScript, Tailwind CSS, Recharts, deployed on Vercel
+
+---
+
+## Running Locally
+
+**Backend:**
+```bash
+cd FP_Tuning_Dashboard/FP_Tuning_Files/backend
+
+python -m venv venv
+source venv/bin/activate
+
+pip install -r requirements.txt
+python app.py
+# running on http://localhost:5000
+```
+
+**Frontend:**
 ```bash
 cd FP_Tuning_Dashboard/FP_Tuning_Files/frontend
 
 npm install
 
 cp .env.example .env.local
-# Edit .env.local:
-# NEXT_PUBLIC_API_URL=http://localhost:5000
+# set NEXT_PUBLIC_API_URL=http://localhost:5000
 
 npm run dev
-# Dashboard at http://localhost:3000
+# running on http://localhost:3000
 ```
-
-### Frontend File Map
-
-| File | Description |
-|---|---|
-| `src/app/page.tsx` | Entire dashboard — all three tabs, data fetching, decision and rule actions |
-| `src/app/layout.tsx` | Root layout, global font, HTML metadata |
-| `src/app/globals.css` | Tailwind base styles |
-| `.env.example` | `NEXT_PUBLIC_API_URL` template |
-| `next.config.js` | Next.js build config with env var fallback |
-| `vercel.json` | Vercel deployment config |
 
 ---
 
-## Backend
-
-| Technology | Version | Role |
-|---|---|---|
-| Python | 3.11 | Runtime |
-| Flask | 2.3.3 | REST API framework |
-| Flask-CORS | 4.0.0 | Cross-origin requests from the Vercel frontend |
-| Gunicorn | 21.2.0 | Production WSGI server |
-| Railway | — | Deployment, auto-deploy on push |
-
-### Backend Setup
-
-```bash
-cd FP_Tuning_Dashboard/FP_Tuning_Files/backend
-
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-
-pip install -r requirements.txt
-
-python app.py
-# API at http://localhost:5000
-```
-
-### Backend File Map
-
-| File | Description |
-|---|---|
-| `app.py` | Flask application — all API routes, CORS config, sample data loading |
-| `src/fp_engine.py` | `FPDetectionEngine` — core pattern detection, rule generation, metrics |
-| `src/sample_data.py` | Generates realistic SOC alerts with embedded FP patterns |
-| `Procfile` | `web: gunicorn app:app` — Railway start command |
-| `runtime.txt` | Python version pin |
-| `railway.json` | Railway service configuration |
-
----
-
-## API Reference
+## API
 
 | Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/` | Service info and endpoint listing |
-| `GET` | `/api/health` | Health check — returns alert count and rule count |
-| `GET` | `/api/metrics` | Full dashboard metrics (FP rate, time saved, top rules, distributions) |
-| `GET` | `/api/alerts` | List alerts — filter by `?status=pending\|fp\|tp\|all` |
-| `POST` | `/api/alerts/<id>/decision` | Submit analyst decision (`true_positive` / `false_positive`) |
-| `GET` | `/api/rules` | List tuning rules — filter by `?status=pending\|applied\|rejected\|all` |
-| `POST` | `/api/rules/<id>/apply` | Apply a tuning rule |
-| `POST` | `/api/rules/<id>/reject` | Reject a tuning rule |
-| `POST` | `/api/analyze` | Re-run pattern detection manually |
-| `POST` | `/api/seed` | Reset all data back to the sample state |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/metrics` | FP rate, time saved, top rules, distributions |
+| `GET` | `/api/alerts` | List alerts — `?status=pending\|fp\|tp\|all` |
+| `POST` | `/api/alerts/<id>/decision` | Submit `true_positive` or `false_positive` |
+| `GET` | `/api/rules` | List tuning rules — `?status=pending\|applied\|rejected\|all` |
+| `POST` | `/api/rules/<id>/apply` | Mark rule as applied |
+| `POST` | `/api/rules/<id>/reject` | Mark rule as rejected |
+| `POST` | `/api/analyze` | Re-run pattern detection |
+| `POST` | `/api/seed` | Reset to sample data |
+
+---
+
+## Deployment
+
+**Backend → Railway**
+1. New Project → Deploy from GitHub
+2. Root Directory: `FP_Tuning_Dashboard/FP_Tuning_Files/backend`
+3. Networking → Generate Domain
+
+**Frontend → Vercel**
+1. Import repo, Root Directory: `FP_Tuning_Dashboard/FP_Tuning_Files/frontend`
+2. Add env var: `NEXT_PUBLIC_API_URL=https://your-app.up.railway.app`
+3. Deploy
+
+---
+
+## Sample Data
+
+Ships with 41 pre-loaded alerts containing four embedded FP patterns (4–6 repeats each) so rule suggestions appear immediately without any triaging:
+
+| Rule | Field | Value |
+|------|-------|-------|
+| Suspicious PowerShell Execution | user | `admin_it_01` |
+| Unusual Outbound Traffic | process | `backup_agent.exe` |
+| Process Injection Detected | user | `dev_team` |
+| Multiple Failed Login Attempts | source_ip | `10.0.2.10` |
 
 ---
 
 ## Project Structure
 
 ```
-FP_Tuning_Dashboard/
-└── FP_Tuning_Files/
-    ├── backend/
-    │   ├── app.py                   # Flask API entry point
-    │   ├── Procfile                 # Gunicorn start command (Railway)
-    │   ├── requirements.txt         # Python dependencies
-    │   ├── runtime.txt              # Python version pin
-    │   ├── railway.json             # Railway deployment config
-    │   └── src/
-    │       ├── fp_engine.py         # Core FP detection engine
-    │       └── sample_data.py       # Alert data generator
-    └── frontend/
-        ├── package.json
-        ├── next.config.js
-        ├── tailwind.config.js
-        ├── tsconfig.json
-        ├── vercel.json
-        ├── .env.example
-        └── src/
-            └── app/
-                ├── layout.tsx
-                ├── page.tsx         # Main dashboard UI
-                └── globals.css
+FP_Tuning_Dashboard/FP_Tuning_Files/
+├── backend/
+│   ├── app.py              # Flask routes
+│   ├── src/
+│   │   ├── fp_engine.py    # detection engine, rule generation, metrics
+│   │   └── sample_data.py  # alert generator
+│   ├── Procfile
+│   └── requirements.txt
+└── frontend/
+    └── src/app/
+        ├── page.tsx        # full dashboard UI
+        └── layout.tsx
 ```
-
----
-
-## Deployment
-
-### Backend → Railway
-
-1. Push the repo to GitHub.
-2. Go to [railway.app](https://railway.app) → New Project → Deploy from GitHub repo.
-3. Set **Root Directory** to `FP_Tuning_Dashboard/FP_Tuning_Files/backend`.
-4. Under Networking → Generate Domain. Copy the URL.
-
-### Frontend → Vercel
-
-1. Go to [vercel.com/new](https://vercel.com/new) → Import the same GitHub repo.
-2. Set **Root Directory** to `FP_Tuning_Dashboard/FP_Tuning_Files/frontend`.
-3. Add environment variable:
-   ```
-   NEXT_PUBLIC_API_URL = https://your-app.up.railway.app
-   ```
-4. Deploy.
-
-The backend CORS config uses `r"https://.*\.vercel\.app"` regex to allow all Vercel deployment URLs automatically — no manual update needed.
-
----
-
-## Sample Data Patterns
-
-The demo pre-loads 41 alerts with these embedded FP patterns:
-
-| Detection Rule | FP Source Field | Value | Description |
-|---|---|---|---|
-| Suspicious PowerShell Execution | user | `admin_it_01` | IT admin running legitimate admin scripts |
-| Unusual Outbound Traffic | process | `backup_agent.exe` | Backup agent doing scheduled transfers |
-| Process Injection Detected | user | `dev_team` | Developers running a debugger |
-| Multiple Failed Login Attempts | source_ip | `10.0.2.10` | Monitoring service login probes |
-
-Each pattern repeats 4–6 times, crossing the engine's minimum threshold of 3 FPs, so tuning rule suggestions appear immediately on load.
-
----
-
-## Core Engine Classes
-
-| Class | Purpose |
-|---|---|
-| `Alert` | Single SOC alert — stores rule name, severity, IP, user, host, process, analyst decision, notes, timestamps |
-| `TuningRule` | Auto-generated rule suggestion — pattern, confidence, fp_count, estimated weekly FP reduction, time saved, action, status |
-| `FPDetectionEngine` | Stateful engine — holds all alerts and rules; exposes `detect_patterns()`, `apply_rule()`, `reject_rule()`, `get_metrics()` |
-
-**Confidence formula:** `min(0.95, 0.5 + fp_count × 0.05)`
-
-**Suggested action:** `suppress` when `fp_count >= 5`, otherwise `lower_severity`
