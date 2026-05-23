@@ -21,7 +21,7 @@ CORS(app, resources={
         "origins": [
             "http://localhost:3000",
             "http://localhost:5173",
-            "https://*.vercel.app",
+            r"https://.*\.vercel\.app",
             "https://fp-tuning-dashboard.vercel.app",
         ],
         "methods": ["GET", "POST", "OPTIONS", "PUT"],
