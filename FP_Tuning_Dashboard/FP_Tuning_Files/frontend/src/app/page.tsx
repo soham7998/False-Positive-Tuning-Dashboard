@@ -492,14 +492,7 @@ export default function Dashboard() {
 
       <footer className="border-t border-slate-200 mt-20 bg-white">
         <div className="max-w-7xl mx-auto px-6 py-6 text-center text-sm text-slate-500">
-          Built by{' '}
-          <a href="https://linkedin.com/in/shahsoham2003" className="text-blue-600 hover:underline">
-            Soham Shah
-          </a>
-          {' • '}
-          <a href="https://github.com/soham7998" className="text-blue-600 hover:underline">
-            Open Source
-          </a>
+          FP Tuning Dashboard v2.0
         </div>
       </footer>
     </div>
