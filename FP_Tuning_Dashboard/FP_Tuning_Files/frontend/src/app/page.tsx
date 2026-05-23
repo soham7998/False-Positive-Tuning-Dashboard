@@ -352,6 +352,9 @@ export default function Dashboard() {
                 </button>
               </div>
             </div>
+
+            {/* Webhook Integration */}
+            <WebhookPanel />
           </div>
         )}
 
@@ -604,6 +607,192 @@ function MiniStat({ icon: Icon, label, value }: any) {
         {label}
       </div>
       <p className="text-sm font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+const INGEST_URL = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000'}/api/ingest`;
+
+const WEBHOOK_EXAMPLES: Record<string, { label: string; curl: string; body: string }> = {
+  splunk: {
+    label: 'Splunk',
+    curl: `curl -X POST "${INGEST_URL}?source=splunk" \\
+  -H "Content-Type: application/json" \\
+  -d @payload.json`,
+    body: JSON.stringify({
+      search_name: 'Suspicious PowerShell Execution',
+      result: {
+        src_ip: '10.0.1.5',
+        user: 'admin_it_01',
+        host: 'workstation-07',
+        process: 'powershell.exe',
+        severity: 'high',
+        _raw: 'EventCode=4104 User=admin_it_01 ScriptBlock=...',
+      },
+    }, null, 2),
+  },
+  elastic: {
+    label: 'Elastic / OpenSearch',
+    curl: `curl -X POST "${INGEST_URL}?source=elastic" \\
+  -H "Content-Type: application/json" \\
+  -d @payload.json`,
+    body: JSON.stringify({
+      '@timestamp': new Date().toISOString(),
+      rule: { name: 'Suspicious PowerShell Execution', severity: 'high' },
+      source: { ip: '10.0.1.5' },
+      user: { name: 'admin_it_01' },
+      host: { hostname: 'workstation-07' },
+      process: { name: 'powershell.exe' },
+    }, null, 2),
+  },
+  generic: {
+    label: 'Generic / Custom',
+    curl: `curl -X POST "${INGEST_URL}?source=generic" \\
+  -H "Content-Type: application/json" \\
+  -d @payload.json`,
+    body: JSON.stringify({
+      rule_name: 'Suspicious PowerShell Execution',
+      severity: 'high',
+      source_ip: '10.0.1.5',
+      user: 'admin_it_01',
+      host: 'workstation-07',
+      process: 'powershell.exe',
+      description: 'PowerShell script block logged on workstation-07',
+    }, null, 2),
+  },
+};
+
+function WebhookPanel() {
+  const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<'splunk' | 'elastic' | 'generic'>('splunk');
+  const [view, setView] = useState<'curl' | 'body'>('curl');
+  const [copied, setCopied] = useState(false);
+  const [testStatus, setTestStatus] = useState<'idle' | 'sending' | 'ok' | 'err'>('idle');
+
+  const copy = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const sendTest = async () => {
+    setTestStatus('sending');
+    try {
+      const body = JSON.parse(WEBHOOK_EXAMPLES[tab].body);
+      const res = await fetch(`${INGEST_URL}?source=${tab}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      setTestStatus(res.ok ? 'ok' : 'err');
+    } catch {
+      setTestStatus('err');
+    }
+    setTimeout(() => setTestStatus('idle'), 3000);
+  };
+
+  const current = WEBHOOK_EXAMPLES[tab];
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-slate-50 transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-slate-100 rounded-lg flex items-center justify-center">
+            <Zap className="w-4 h-4 text-slate-600" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold text-slate-900">SIEM Webhook Integration</p>
+            <p className="text-xs text-slate-500">Push alerts directly from Splunk, Elastic, or any SIEM</p>
+          </div>
+        </div>
+        {open ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-200">
+          <div className="px-6 py-4 bg-slate-50 border-b border-slate-200">
+            <p className="text-xs text-slate-500 mb-1 font-medium">Ingest endpoint</p>
+            <div className="flex items-center gap-2">
+              <code className="text-xs font-mono text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded flex-1 truncate">
+                POST {INGEST_URL}?source=splunk|elastic|generic
+              </code>
+              <button
+                onClick={() => copy(`POST ${INGEST_URL}?source=generic`)}
+                className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium shrink-0"
+              >
+                <Copy className="w-3.5 h-3.5" />{copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-2">
+              Optional auth: set <code className="font-mono">INGEST_API_KEY</code> env var on Railway, then pass <code className="font-mono">X-API-Key: &lt;key&gt;</code> header.
+            </p>
+          </div>
+
+          <div className="flex border-b border-slate-200 bg-white">
+            {(['splunk', 'elastic', 'generic'] as const).map((s) => (
+              <button
+                key={s}
+                onClick={() => { setTab(s); setView('curl'); setCopied(false); }}
+                className={`px-4 py-2.5 text-xs font-medium ${
+                  tab === s ? 'border-b-2 border-blue-600 text-blue-600' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                {WEBHOOK_EXAMPLES[s].label}
+              </button>
+            ))}
+          </div>
+
+          <div className="px-6 py-4">
+            <div className="flex items-center gap-2 mb-3">
+              {(['curl', 'body'] as const).map((v) => (
+                <button
+                  key={v}
+                  onClick={() => { setView(v); setCopied(false); }}
+                  className={`px-3 py-1 rounded text-xs font-medium ${
+                    view === v ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {v === 'curl' ? 'cURL' : 'Payload'}
+                </button>
+              ))}
+              <button
+                onClick={() => copy(view === 'curl' ? current.curl : current.body)}
+                className="ml-auto text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
+              >
+                <Copy className="w-3.5 h-3.5" />{copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+
+            <pre className="bg-slate-950 text-green-400 text-xs font-mono p-4 rounded-lg overflow-x-auto whitespace-pre">
+              {view === 'curl' ? current.curl : current.body}
+            </pre>
+
+            <div className="flex items-center gap-3 mt-3">
+              <button
+                onClick={sendTest}
+                disabled={testStatus === 'sending'}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-medium flex items-center gap-2"
+              >
+                {testStatus === 'sending' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                Send Test Alert
+              </button>
+              {testStatus === 'ok' && (
+                <span className="text-xs text-green-600 font-medium flex items-center gap-1">
+                  <CheckCircle className="w-3.5 h-3.5" /> Alert ingested — check Alert Triage
+                </span>
+              )}
+              {testStatus === 'err' && (
+                <span className="text-xs text-red-600 font-medium flex items-center gap-1">
+                  <XCircle className="w-3.5 h-3.5" /> Failed — check console
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

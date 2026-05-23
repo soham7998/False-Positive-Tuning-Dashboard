@@ -9,6 +9,7 @@ from dataclasses import asdict
 import os
 import json
 from datetime import datetime
+from uuid import uuid4
 
 from src.fp_engine import FPDetectionEngine, Alert, TuningRule
 from src.sample_data import generate_sample_alerts
@@ -190,6 +191,99 @@ def seed():
         'alerts_loaded': len(engine.alerts),
         'rules_suggested': len(engine.tuning_rules)
     })
+
+
+INGEST_API_KEY = os.getenv('INGEST_API_KEY', '')
+
+
+def _adapt_splunk(data: dict) -> dict:
+    result = data.get('result', data)
+    return {
+        'alert_id': f"SPL-{result.get('sid', data.get('sid', uuid4().hex[:8]))}",
+        'timestamp': datetime.now().isoformat(),
+        'rule_name': data.get('search_name', result.get('rule_name', 'Unknown Rule')),
+        'severity': result.get('severity', result.get('urgency', 'medium')).lower(),
+        'source_ip': result.get('src_ip', result.get('src', result.get('source_ip', '0.0.0.0'))),
+        'destination_ip': result.get('dest_ip', result.get('dest', '0.0.0.0')),
+        'user': result.get('user', result.get('src_user', 'unknown')),
+        'host': result.get('host', result.get('dest_host', 'unknown')),
+        'process': result.get('process', result.get('process_name', 'unknown')),
+        'description': result.get('_raw', f"Splunk alert: {data.get('search_name', 'Unknown')}"),
+        'analyst_decision': None,
+    }
+
+
+def _adapt_elastic(data: dict) -> dict:
+    rule = data.get('rule', {})
+    src = data.get('source', {})
+    return {
+        'alert_id': f"ELK-{data.get('id', uuid4().hex[:8])}",
+        'timestamp': data.get('@timestamp', datetime.now().isoformat()),
+        'rule_name': rule.get('name', 'Unknown Rule'),
+        'severity': rule.get('severity', 'medium').lower(),
+        'source_ip': src.get('ip', '0.0.0.0'),
+        'destination_ip': data.get('destination', {}).get('ip', '0.0.0.0'),
+        'user': data.get('user', {}).get('name', 'unknown'),
+        'host': data.get('host', {}).get('hostname', data.get('host', {}).get('name', 'unknown')),
+        'process': data.get('process', {}).get('name', data.get('process', {}).get('executable', 'unknown')),
+        'description': f"Elastic alert: {rule.get('name', 'Unknown')}",
+        'analyst_decision': None,
+    }
+
+
+def _adapt_generic(data: dict) -> dict:
+    return {
+        'alert_id': data.get('alert_id', f"GEN-{uuid4().hex[:8]}"),
+        'timestamp': data.get('timestamp', datetime.now().isoformat()),
+        'rule_name': data.get('rule_name', data.get('rule', 'Unknown Rule')),
+        'severity': data.get('severity', 'medium').lower(),
+        'source_ip': data.get('source_ip', data.get('src_ip', '0.0.0.0')),
+        'destination_ip': data.get('destination_ip', data.get('dest_ip', '0.0.0.0')),
+        'user': data.get('user', data.get('username', 'unknown')),
+        'host': data.get('host', data.get('hostname', 'unknown')),
+        'process': data.get('process', data.get('process_name', 'unknown')),
+        'description': data.get('description', data.get('message', 'Ingested alert')),
+        'analyst_decision': None,
+    }
+
+
+ADAPTERS = {
+    'splunk': _adapt_splunk,
+    'elastic': _adapt_elastic,
+    'generic': _adapt_generic,
+}
+
+
+@app.route('/api/ingest', methods=['POST', 'OPTIONS'])
+def ingest():
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    if INGEST_API_KEY:
+        key = request.headers.get('X-API-Key', '')
+        if key != INGEST_API_KEY:
+            return jsonify({'error': 'Unauthorized'}), 401
+
+    source = request.args.get('source', 'generic').lower()
+    if source not in ADAPTERS:
+        return jsonify({'error': f'Unknown source. Use: {", ".join(ADAPTERS)}'}), 400
+
+    data = request.json
+    if not data:
+        return jsonify({'error': 'Empty body'}), 400
+
+    try:
+        alert = ADAPTERS[source](data)
+        engine.add_alerts([alert])
+        engine.detect_patterns()
+        return jsonify({
+            'success': True,
+            'alert_id': alert['alert_id'],
+            'rule_name': alert['rule_name'],
+            'total_alerts': len(engine.alerts),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 
 @app.errorhandler(404)
