@@ -28,6 +28,8 @@ class Alert:
     analyst_id: Optional[str] = None
     resolved_at: Optional[str] = None
     time_to_resolve_seconds: Optional[int] = 0
+    mitre_technique: Optional[str] = None
+    mitre_tactic: Optional[str] = None
 
 
 @dataclass

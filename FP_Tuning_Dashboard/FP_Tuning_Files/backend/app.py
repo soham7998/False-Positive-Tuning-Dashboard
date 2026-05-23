@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from src.fp_engine import FPDetectionEngine, Alert, TuningRule
 from src.sample_data import generate_sample_alerts
+from src.rule_library import get_all_rules, get_rule_by_name, fetch_sigma_rules_from_github
 
 app = Flask(__name__)
 
@@ -194,6 +195,7 @@ def seed():
 
 
 INGEST_API_KEY = os.getenv('INGEST_API_KEY', '')
+GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
 
 
 def _adapt_splunk(data: dict) -> dict:
@@ -245,6 +247,42 @@ def _adapt_generic(data: dict) -> dict:
         'description': data.get('description', data.get('message', 'Ingested alert')),
         'analyst_decision': None,
     }
+
+
+@app.route('/api/library')
+def rule_library():
+    rules = get_all_rules()
+
+    # Annotate each rule with FP/TP counts from live alert data
+    fp_by_rule = {}
+    tp_by_rule = {}
+    for alert in engine.alerts:
+        if alert.analyst_decision == 'false_positive':
+            fp_by_rule[alert.rule_name] = fp_by_rule.get(alert.rule_name, 0) + 1
+        elif alert.analyst_decision == 'true_positive':
+            tp_by_rule[alert.rule_name] = tp_by_rule.get(alert.rule_name, 0) + 1
+
+    annotated = []
+    for rule in rules:
+        fp = fp_by_rule.get(rule['name'], 0)
+        tp = tp_by_rule.get(rule['name'], 0)
+        total = fp + tp
+        annotated.append({
+            **rule,
+            'fp_count': fp,
+            'tp_count': tp,
+            'fp_rate': round(fp / total * 100, 1) if total > 0 else None,
+        })
+
+    annotated.sort(key=lambda r: r['fp_count'], reverse=True)
+    return jsonify({'count': len(annotated), 'rules': annotated})
+
+
+@app.route('/api/library/fetch-sigma', methods=['POST'])
+def fetch_sigma():
+    """Trigger a live fetch of rule names from SigmaHQ GitHub."""
+    names = fetch_sigma_rules_from_github(token=GITHUB_TOKEN)
+    return jsonify({'fetched': len(names), 'sample': names[:10]})
 
 
 ADAPTERS = {

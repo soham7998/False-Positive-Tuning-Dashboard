@@ -61,6 +61,22 @@ interface Alert {
   process: string;
   description: string;
   analyst_decision: string | null;
+  mitre_technique: string | null;
+  mitre_tactic: string | null;
+}
+
+interface LibraryRule {
+  id: string;
+  name: string;
+  description: string;
+  severity: string;
+  technique: string;
+  tactic: string;
+  sigma_url: string;
+  common_fp: string;
+  fp_count: number;
+  tp_count: number;
+  fp_rate: number | null;
 }
 
 interface TuningRule {
@@ -89,7 +105,8 @@ export default function Dashboard() {
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [rules, setRules] = useState<TuningRule[]>([]);
-  const [activeTab, setActiveTab] = useState<'overview' | 'triage' | 'rules'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'triage' | 'rules' | 'library'>('overview');
+  const [library, setLibrary] = useState<LibraryRule[]>([]);
   const [alertFilter, setAlertFilter] = useState<'pending' | 'fp' | 'tp' | 'all'>('pending');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -106,19 +123,22 @@ export default function Dashboard() {
   const fetchAll = async () => {
     try {
       setError(null);
-      const [mRes, aRes, rRes] = await Promise.all([
+      const [mRes, aRes, rRes, lRes] = await Promise.all([
         fetch(`${API_URL}/api/metrics`),
         fetch(`${API_URL}/api/alerts?status=${alertFilter}`),
         fetch(`${API_URL}/api/rules?status=pending`),
+        fetch(`${API_URL}/api/library`),
       ]);
-      
+
       if (!mRes.ok) throw new Error('Backend unreachable');
-      
+
       setMetrics(await mRes.json());
       const alertsData = await aRes.json();
       setAlerts(alertsData.alerts || []);
       const rulesData = await rRes.json();
       setRules(rulesData.rules || []);
+      const libData = await lRes.json();
+      setLibrary(libData.rules || []);
     } catch (e: any) {
       setError(`Cannot connect to API at ${API_URL}. Is the backend running?`);
     } finally {
@@ -228,6 +248,7 @@ export default function Dashboard() {
             { id: 'overview', label: 'Overview', icon: Activity },
             { id: 'triage', label: 'Alert Triage', icon: Target },
             { id: 'rules', label: 'Tuning Rules', icon: Zap },
+            { id: 'library', label: 'Rule Library', icon: FileText },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -402,6 +423,16 @@ export default function Dashboard() {
                             {alert.severity.toUpperCase()}
                           </span>
                           <span className="text-sm font-semibold text-slate-900">{alert.rule_name}</span>
+                          {alert.mitre_technique && (
+                            <a
+                              href={`https://attack.mitre.org/techniques/${alert.mitre_technique.replace('.', '/')}/`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100"
+                            >
+                              {alert.mitre_technique}
+                            </a>
+                          )}
                           <span className="text-xs text-slate-500 font-mono">{alert.alert_id}</span>
                         </div>
                         <p className="text-sm text-slate-600 mb-2">{alert.description}</p>
@@ -567,6 +598,78 @@ export default function Dashboard() {
                 </div>
               ))
             )}
+          </div>
+        )}
+        {/* LIBRARY TAB */}
+        {activeTab === 'library' && (
+          <div className="space-y-3">
+            <div className="bg-white border border-slate-200 rounded-xl p-4 flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Sigma Detection Rule Library</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  {library.length} rules • sourced from{' '}
+                  <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">SigmaHQ</a>
+                  {' '}• FP rates update as you triage
+                </p>
+              </div>
+            </div>
+
+            {library.map((rule) => (
+              <div key={rule.id} className="bg-white border border-slate-200 rounded-xl p-5">
+                <div className="flex items-start justify-between gap-4 mb-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium border ${SEVERITY_COLORS[rule.severity] || SEVERITY_COLORS.medium}`}>
+                        {rule.severity.toUpperCase()}
+                      </span>
+                      <a
+                        href={`https://attack.mitre.org/techniques/${rule.technique.replace('.', '/')}/`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100"
+                      >
+                        {rule.technique}
+                      </a>
+                      <span className="text-xs text-slate-500">{rule.tactic}</span>
+                    </div>
+                    <h3 className="text-sm font-semibold text-slate-900 mb-1">{rule.name}</h3>
+                    <p className="text-xs text-slate-600 mb-2">{rule.description}</p>
+                    <p className="text-xs text-slate-400">
+                      <span className="font-medium text-slate-500">Common FP: </span>{rule.common_fp}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    {rule.fp_rate !== null ? (
+                      <div className="text-right">
+                        <p className="text-lg font-bold text-red-600">{rule.fp_rate}%</p>
+                        <p className="text-xs text-slate-500">FP rate</p>
+                      </div>
+                    ) : (
+                      <div className="text-right">
+                        <p className="text-sm text-slate-400">No data</p>
+                        <p className="text-xs text-slate-400">triage to populate</p>
+                      </div>
+                    )}
+                    <div className="flex gap-2 text-xs text-slate-500">
+                      <span className="bg-red-50 text-red-700 px-2 py-0.5 rounded">{rule.fp_count} FP</span>
+                      <span className="bg-green-50 text-green-700 px-2 py-0.5 rounded">{rule.tp_count} TP</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+                  <a
+                    href={rule.sigma_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                  >
+                    <ExternalLink className="w-3 h-3" /> View Sigma Rule
+                  </a>
+                  <span className="text-slate-200">|</span>
+                  <span className="text-xs text-slate-400 font-mono">{rule.id}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </main>
