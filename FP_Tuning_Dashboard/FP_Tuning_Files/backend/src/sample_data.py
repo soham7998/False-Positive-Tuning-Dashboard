@@ -53,7 +53,7 @@ def generate_sample_alerts(count: int = 50) -> list:
                 hours=random.randint(0, 23),
                 minutes=random.randint(0, 59)
             )
-            
+
             alerts.append({
                 "alert_id": f"ALT-{len(alerts)+1:05d}",
                 "timestamp": alert_time.isoformat(),
@@ -64,15 +64,15 @@ def generate_sample_alerts(count: int = 50) -> list:
                 "user": pattern["user"],
                 "host": pattern["host"],
                 "process": pattern["process"],
-                "description": f"Triggered by {pattern['process']} on {pattern['host']} by {pattern['user']}",
-                "analyst_decision": "false_positive",
-                "analyst_notes": "Known legitimate activity, recurring FP",
-                "analyst_id": "soc_analyst_1",
-                "resolved_at": (alert_time + timedelta(minutes=random.randint(5, 20))).isoformat(),
-                "time_to_resolve_seconds": random.randint(300, 1200),
+                "description": f"Rule '{pattern['rule']}' triggered by {pattern['process']} on {pattern['host']}",
+                "analyst_decision": None,
+                "analyst_notes": None,
+                "analyst_id": None,
+                "resolved_at": None,
+                "time_to_resolve_seconds": 0,
             })
-    
-    # Add true positives
+
+    # Add suspicious alerts (likely TPs — external IPs, known bad processes)
     for _ in range(8):
         rule, severity = random.choice(rules)
         alert_time = base_time + timedelta(
@@ -80,47 +80,45 @@ def generate_sample_alerts(count: int = 50) -> list:
             hours=random.randint(0, 23),
             minutes=random.randint(0, 59)
         )
-        
+
         alerts.append({
             "alert_id": f"ALT-{len(alerts)+1:05d}",
             "timestamp": alert_time.isoformat(),
             "rule_name": rule,
             "severity": severity,
-            "source_ip": f"203.0.113.{random.randint(1, 254)}",  # External
+            "source_ip": f"203.0.113.{random.randint(1, 254)}",
             "destination_ip": f"192.168.1.{random.randint(1, 254)}",
             "user": random.choice(users_suspicious),
             "host": f"WORKSTATION-{random.randint(1, 50):02d}",
             "process": random.choice(["malware.exe", "unknown.exe", "mimikatz.exe"]),
-            "description": f"Suspicious activity detected from external IP",
-            "analyst_decision": "true_positive",
-            "analyst_notes": "Confirmed malicious — escalated to L3",
-            "analyst_id": "soc_analyst_1",
-            "resolved_at": (alert_time + timedelta(minutes=random.randint(15, 60))).isoformat(),
-            "time_to_resolve_seconds": random.randint(900, 3600),
+            "description": f"Rule '{rule}' triggered from external IP by {random.choice(users_suspicious)}",
+            "analyst_decision": None,
+            "analyst_notes": None,
+            "analyst_id": None,
+            "resolved_at": None,
+            "time_to_resolve_seconds": 0,
         })
-    
-    # Add some pending alerts
+
+    # Add noise — internal alerts with ambiguous context
     for _ in range(15):
         rule, severity = random.choice(rules)
         alert_time = base_time + timedelta(
-            days=random.randint(5, 7),
+            days=random.randint(0, 6),
             hours=random.randint(0, 23),
             minutes=random.randint(0, 59)
         )
-        
-        is_external = random.random() < 0.5
-        
+
         alerts.append({
             "alert_id": f"ALT-{len(alerts)+1:05d}",
             "timestamp": alert_time.isoformat(),
             "rule_name": rule,
             "severity": severity,
-            "source_ip": f"{'203.0.113' if is_external else '10.0'}.{random.randint(1, 254)}.{random.randint(1, 254)}",
+            "source_ip": f"10.0.{random.randint(1, 20)}.{random.randint(1, 254)}",
             "destination_ip": f"192.168.1.{random.randint(1, 254)}",
             "user": random.choice(users_legit + users_suspicious),
             "host": f"HOST-{random.randint(1, 100):03d}",
             "process": random.choice(["powershell.exe", "cmd.exe", "explorer.exe", "chrome.exe"]),
-            "description": f"Alert pending analyst review",
+            "description": f"Rule '{rule}' triggered — requires analyst review",
             "analyst_decision": None,
             "analyst_notes": None,
             "analyst_id": None,
