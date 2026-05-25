@@ -232,7 +232,7 @@ export default function Dashboard() {
               <RefreshCw className="w-4 h-4" /> Reset Demo Data
             </button>
             <a
-              href="https://github.com/soham7998/FP_Tuning_Dashboard"
+              href="https://github.com/soham7998/False-Positive-Tuning-Dashboard"
               target="_blank"
               rel="noopener noreferrer"
               className="text-sm text-slate-600 hover:text-slate-900 flex items-center gap-1.5 font-medium"
