@@ -1,9 +1,11 @@
 # FP Tuning Dashboard
 
-[![Backend](https://img.shields.io/badge/Backend-Railway-9333ea)](https://railway.app)
-[![Frontend](https://img.shields.io/badge/Frontend-Vercel-000)](https://vercel.com)
+[![Backend](https://img.shields.io/badge/Backend-Railway-9333ea)](https://false-positive-tuning-dashboard-production.up.railway.app)
+[![Frontend](https://img.shields.io/badge/Frontend-Vercel-000)](https://false-positive-tuning-dashboard.vercel.app)
+[![GitHub](https://img.shields.io/badge/GitHub-soham7998%2FFalse--Positive--Tuning--Dashboard-181717?logo=github)](https://github.com/soham7998/False-Positive-Tuning-Dashboard)
 
 **Live:** https://false-positive-tuning-dashboard.vercel.app  
+**Repo:** https://github.com/soham7998/False-Positive-Tuning-Dashboard  
 **API:** https://false-positive-tuning-dashboard-production.up.railway.app
 
 SOC analysts spend a significant chunk of each shift triaging alerts they've already seen before — the same rule firing on the same backup process, the same IT admin account, the same monitoring IP. This tool tracks those decisions and automatically surfaces suppression rule suggestions when a pattern repeats enough times to be worth acting on.
@@ -147,14 +149,14 @@ npm run dev
 ## Deployment
 
 **Backend → Railway**
-1. New Project → Deploy from GitHub
+1. New Project → Deploy from GitHub ([soham7998/False-Positive-Tuning-Dashboard](https://github.com/soham7998/False-Positive-Tuning-Dashboard))
 2. Root Directory: `FP_Tuning_Dashboard/FP_Tuning_Files/backend`
 3. Networking → Generate Domain
 
 **Frontend → Vercel**
-1. Import repo, Root Directory: `FP_Tuning_Dashboard/FP_Tuning_Files/frontend`
-2. Add env var: `NEXT_PUBLIC_API_URL=https://your-app.up.railway.app`
-3. Deploy
+1. Import [soham7998/False-Positive-Tuning-Dashboard](https://github.com/soham7998/False-Positive-Tuning-Dashboard), Root Directory: `FP_Tuning_Dashboard/FP_Tuning_Files/frontend`
+2. Add env var: `NEXT_PUBLIC_API_URL=https://false-positive-tuning-dashboard-production.up.railway.app`
+3. Deploy → https://false-positive-tuning-dashboard.vercel.app
 
 ---
 
